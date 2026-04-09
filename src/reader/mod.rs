@@ -167,11 +167,20 @@ impl GameReader {
         // Simplified stub: reads the planted C4 if present.
         let mut entities = Vec::new();
 
-        let c4_ptr_addr = self.direct(self.offsets.direct.planted_c4);
-        let c4_ptr = self.read_ptr(c4_ptr_addr).unwrap_or(0);
-        if c4_ptr != 0 {
-            let _origin = self.process.read_vec3(c4_ptr + self.offsets.iface.c4_origin)?;
-            entities.push(EntityInfo::Bomb);
+        let list_ptr_addr = self.direct(self.offsets.direct.entity_list);
+        let list_ptr = self.read_ptr(list_ptr_addr).unwrap_or(0);
+        if list_ptr == 0 {
+            return Ok(entities);
+        }
+
+        let c4_handle_addr = self.direct(self.offsets.direct.planted_c4);
+        let c4_handle = self.process.read_u32(c4_handle_addr).unwrap_or(0);
+        if c4_handle != 0 && c4_handle != u32::MAX {
+            if let Some(c4_ptr) = self.process.resolve_entity_handle(list_ptr, c4_handle) {
+                if self.process.read_vec3(c4_ptr + self.offsets.iface.c4_origin).is_ok() {
+                    entities.push(EntityInfo::Bomb);
+                }
+            }
         }
 
         Ok(entities)
@@ -179,11 +188,22 @@ impl GameReader {
 
     /// Reads the planted bomb state.
     pub fn read_bomb(&mut self) -> Result<BombData, ReadError> {
-        let c4_ptr_addr = self.direct(self.offsets.direct.planted_c4);
-        let c4_ptr = self.read_ptr(c4_ptr_addr).unwrap_or(0);
-        if c4_ptr == 0 {
+        let list_ptr_addr = self.direct(self.offsets.direct.entity_list);
+        let list_ptr = self.read_ptr(list_ptr_addr).unwrap_or(0);
+        if list_ptr == 0 {
             return Ok(BombData::default());
         }
+
+        let c4_handle_addr = self.direct(self.offsets.direct.planted_c4);
+        let c4_handle = self.process.read_u32(c4_handle_addr).unwrap_or(0);
+        if c4_handle == 0 || c4_handle == u32::MAX {
+            return Ok(BombData::default());
+        }
+
+        let c4_ptr = match self.process.resolve_entity_handle(list_ptr, c4_handle) {
+            Some(p) => p,
+            None => return Ok(BombData::default()),
+        };
 
         let position = self.process.read_vec3(c4_ptr + self.offsets.iface.c4_origin)?;
         let blow_time = self.process.read_f32(c4_ptr + self.offsets.iface.c4_blow_time)?;
