@@ -85,6 +85,12 @@ pub struct Interface {
 pub struct Offsets {
     pub direct: Direct,
     pub iface: Interface,
+    /// Base addresses of key shared libraries.
+    pub libs: LibraryOffsets,
+    /// Resolved interface pointers (ICvar, IEntitySystem, …).
+    pub interfaces: InterfaceOffsets,
+    /// ConVar values needed at runtime.
+    pub convars: ConvarOffsets,
 }
 
 impl Offsets {
@@ -136,6 +142,9 @@ impl Offsets {
                 // CGameRules
                 game_rules_freeze_period: 0xA0,
             },
+            libs: LibraryOffsets::default(),
+            interfaces: InterfaceOffsets::default(),
+            convars: ConvarOffsets::default(),
         }
     }
 
@@ -154,6 +163,122 @@ impl Offsets {
         //  3. Return updated offsets
         self.clone()
     }
+}
+
+// ── Extended offset types ─────────────────────────────────────────────────────
+
+/// Base addresses of the key CS2 shared libraries.
+///
+/// All values are set by [`crate::process::offsets_discovery::discover_offsets`]
+/// and are zero until discovery runs.
+#[derive(Debug, Clone, Default)]
+pub struct LibraryOffsets {
+    /// `libclient.so` base address.
+    pub client: u64,
+    /// `libengine2.so` base address.
+    pub engine: u64,
+    /// `libtier0.so` base address.
+    pub tier0: u64,
+    /// `libinputsystem.so` base address.
+    pub input: u64,
+    /// `libSDL3.so` base address.
+    pub sdl: u64,
+    /// `libschemasystem.so` base address.
+    pub schema: u64,
+}
+
+/// Resolved interface pointers found via `CreateInterface`.
+///
+/// Each field is the address of the concrete interface object (not a vtable).
+/// Zero means the interface was not resolved.
+#[derive(Debug, Clone, Default)]
+pub struct InterfaceOffsets {
+    /// `IGameResourceService` (entity system).
+    pub resource: u64,
+    /// `IEntitySystem` (entity list root).
+    pub entity: u64,
+    /// `ICvar` (console variable system).
+    pub cvar: u64,
+    /// `IInputSystem` (keyboard / mouse input).
+    pub input: u64,
+}
+
+/// Runtime addresses of discovered `ConVar` objects.
+#[derive(Debug, Clone, Default)]
+pub struct ConvarOffsets {
+    /// `mp_teammates_are_enemies` — FFA mode flag.
+    pub ffa: u64,
+    /// `sensitivity` — mouse sensitivity setting.
+    pub sensitivity: u64,
+}
+
+/// Full offsets for `C_CSPlayerPawn` fields used by advanced features.
+///
+/// These extend [`Interface::pawn_*`] with fields needed for camera, item,
+/// weapon, movement, and observer service sub-objects.
+#[derive(Debug, Clone, Default)]
+pub struct PawnOffsets {
+    // ── Base pawn fields ─────────────────────────────────────────────────────
+    pub health: u64,
+    pub armor: u64,
+    pub origin: u64,
+    pub view_offset: u64,
+    pub eye_angles: u64,
+    pub game_scene_node: u64,
+    pub velocity: u64,
+    pub has_defuser: u64,
+    pub has_helmet: u64,
+
+    // ── Service sub-object pointers ──────────────────────────────────────────
+    /// Pointer to `CCSPlayer_CameraServices`.
+    pub camera_services: u64,
+    /// Pointer to `CCSPlayer_ItemServices`.
+    pub item_services: u64,
+    /// Pointer to `CCSPlayer_WeaponServices`.
+    pub weapon_services: u64,
+    /// Pointer to `CCSPlayer_MovementServices`.
+    pub movement_services: u64,
+    /// Pointer to `CCSPlayer_ObserverServices`.
+    pub observer_services: u64,
+
+    // ── Camera services fields ───────────────────────────────────────────────
+    /// `m_flFOVSensitivityAdjust` inside `CameraServices`.
+    pub camera_fov_sensitivity: u64,
+
+    // ── Movement services fields ─────────────────────────────────────────────
+    /// `m_flMaxspeed` inside `MovementServices`.
+    pub movement_maxspeed: u64,
+    /// `m_nMoveType` inside `MovementServices`.
+    pub movement_move_type: u64,
+
+    // ── Observer services fields ─────────────────────────────────────────────
+    /// `m_hObserverTarget` inside `ObserverServices`.
+    pub observer_target: u64,
+    /// `m_iObserverMode` inside `ObserverServices`.
+    pub observer_mode: u64,
+
+    // ── Weapon services fields ───────────────────────────────────────────────
+    /// `m_hActiveWeapon` inside `WeaponServices`.
+    pub active_weapon: u64,
+    /// `m_iClip1` on the weapon entity.
+    pub weapon_clip1: u64,
+    /// `m_iClip2` on the weapon entity.
+    pub weapon_clip2: u64,
+    /// `m_iItemDefinitionIndex` on the weapon entity.
+    pub weapon_def_index: u64,
+}
+
+/// Full offsets for `CCSPlayerController` fields.
+#[derive(Debug, Clone, Default)]
+pub struct PlayerControllerOffsets {
+    pub steam_id: u64,
+    pub player_name: u64,
+    pub pawn_handle: u64,
+    pub team_num: u64,
+    /// `m_iPing` — player latency.
+    pub ping: u64,
+    /// `m_bPawnIsAlive` — whether the pawn is alive.
+    pub pawn_is_alive: u64,
 }
 
 #[cfg(test)]
