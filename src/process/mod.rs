@@ -461,22 +461,31 @@ impl Process {
     /// two-level entity list:
     ///
     /// ```text
-    /// chunk_ptr = entity_list[handle >> 9]        (pointer-sized array entry)
-    /// entity    = chunk_ptr + (handle & 0x1FF) * 0x78
+    /// chunk_ptr = entity_list[handle >> 9]                   (pointer-sized array entry)
+    /// entity    = chunk_ptr + (handle & 0x1FF) * ENTITY_STRIDE
     /// ```
     ///
     /// Returns `None` for null/invalid handles or when the chunk pointer is zero.
     pub fn resolve_entity_handle(&mut self, entity_list_ptr: u64, handle: u32) -> Option<u64> {
+        /// Size of each entity slot in the entity list chunk (bytes).
+        const ENTITY_STRIDE: u64 = 0x78;
+        /// Maximum number of chunks in the entity list.
+        /// CS2 supports up to 512 entities per chunk; 64 chunks covers 32 768 handles.
+        const MAX_CHUNK_INDEX: u64 = 64;
+
         if handle == 0 || handle == u32::MAX {
             return None;
         }
         let chunk_index = (handle >> 9) as u64;
         let entry_index = (handle & 0x1FF) as u64;
+        if chunk_index >= MAX_CHUNK_INDEX {
+            return None;
+        }
         let chunk_ptr = self.read_u64(entity_list_ptr + chunk_index * 8).ok()?;
         if chunk_ptr == 0 {
             return None;
         }
-        Some(chunk_ptr + entry_index * 0x78)
+        Some(chunk_ptr + entry_index * ENTITY_STRIDE)
     }
 }
 
@@ -600,5 +609,14 @@ mod tests {
         let mut proc = Process::new(0);
         // u32::MAX is the "no entity" sentinel.
         assert!(proc.resolve_entity_handle(0x1000, u32::MAX).is_none());
+    }
+
+    #[test]
+    fn test_resolve_entity_handle_out_of_bounds_chunk_returns_none() {
+        let mut proc = Process::new(0);
+        // chunk_index = handle >> 9; handle with chunk_index >= 64 is rejected.
+        // 64 << 9 = 32768
+        let handle_too_large: u32 = 64 << 9;
+        assert!(proc.resolve_entity_handle(0x1000, handle_too_large).is_none());
     }
 }
