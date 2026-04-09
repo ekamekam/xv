@@ -166,8 +166,6 @@ impl GameReader {
         let lpp_ptr = client + off.direct.local_player_pawn;
         let local_pawn = self.read_u64(lpp_ptr)?;
         if local_pawn != 0 {
-            // line 173: origin is used within read_pawn via pawn_origin offset
-            let _origin = self.read_vec3(local_pawn + off.iface.pawn_origin)?;
             self.read_pawn(local_pawn, &mut data.local_player)?;
         }
 

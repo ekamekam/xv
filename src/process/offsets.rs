@@ -18,6 +18,8 @@ pub struct Direct {
     pub planted_c4: u64,
     /// `dwGameRules` — pointer to game rules.
     pub game_rules: u64,
+    /// `dwGlobalVars` — pointer to `CGlobalVarsBase`.
+    pub global_vars: u64,
 }
 
 /// Offsets of fields within CS2 classes.
@@ -107,6 +109,7 @@ impl Offsets {
                 view_matrix: 0x18D_D5E0,
                 planted_c4: 0x18E_0F28,
                 game_rules: 0x18D_7A40,
+                global_vars: 0,
             },
             iface: Interface {
                 // CCSPlayerController

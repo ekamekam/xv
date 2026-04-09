@@ -68,7 +68,7 @@ pub fn discover_offsets(process: &mut Process) -> Result<Offsets, ProcessError> 
     let planted_c4 = scan_planted_c4(process, client)
         .unwrap_or(fallback.direct.planted_c4);
 
-    let _global_vars = scan_global_vars(process, client)
+    let global_vars = scan_global_vars(process, client)
         .unwrap_or(0);
 
     let direct = Direct {
@@ -78,6 +78,7 @@ pub fn discover_offsets(process: &mut Process) -> Result<Offsets, ProcessError> 
         view_matrix,
         planted_c4,
         game_rules: fallback.direct.game_rules,
+        global_vars,
     };
 
     // ── Interface resolution ──────────────────────────────────────────────────

@@ -425,12 +425,9 @@ impl Process {
             return None;
         }
         // ICvar::FindVar is typically vtable slot 16 (offset 0x80 for 64-bit).
-        let vtable = self.read_u64(interface).ok()?;
-        let find_var_fn = self.read_u64(vtable + 0x80).ok()?;
-        // We can't call the function directly (read-only process), so instead
-        // we scan the cvar linked list via the known cvar hash table offset.
-        // The hash table is at ICvar + 0x40 in recent CS2 builds.
-        let _find_var_fn = find_var_fn; // kept for documentation purposes
+        // We can't call the function directly from a read-only process, so we
+        // walk the cvar linked list at ICvar + 0x40 instead.
+        let _vtable = self.read_u64(interface).ok()?;
 
         // Walk the flat cvar linked list stored at interface + 0x40.
         let list_head_offset: u64 = 0x40;
