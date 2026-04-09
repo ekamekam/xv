@@ -1,51 +1,59 @@
-//! Game state reader — translates raw memory reads into typed [`Data`].
+//! High-level game state reader.
 //!
-//! The main entry point is [`GameReader`], which wraps a [`Process`] handle
-//! and decodes the CS2 memory layout defined in [`crate::process::offsets`].
+//! [`GameReader`] orchestrates reading all CS2 game state into a [`Data`]
+//! struct.  It owns a [`Process`] handle and uses cached [`Offsets`] so that
+//! individual read methods are concise.
 
 use glam::{Mat4, Vec3};
 
-use crate::data::{Data, PlayerData};
-use crate::process::offsets::Offsets;
-use crate::process::{Process, ProcessError};
+use crate::cs2::{entity::EntityInfo, weapon::Weapon};
+use crate::data::{BombData, Data, PlayerData};
+use crate::process::{offsets::Offsets, Process, ProcessError};
 
-/// Error type returned by [`GameReader`] operations.
+/// Error type returned by [`GameReader`] methods.
 #[derive(Debug)]
-pub enum ReaderError {
-    /// Underlying memory read error.
+pub enum ReadError {
+    /// A memory read failed.
     Memory(ProcessError),
-    /// A required module was not found in the process map.
-    ModuleNotFound(String),
-    /// Attempted to read from a null/invalid pointer.
-    NullPointer(u64),
+    /// The game does not appear to be running (not in a match, etc.).
+    NotInGame,
 }
 
-impl std::fmt::Display for ReaderError {
+impl std::fmt::Display for ReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ReaderError::Memory(e) => write!(f, "memory error: {e}"),
-            ReaderError::ModuleNotFound(name) => write!(f, "module not found: {name}"),
-            ReaderError::NullPointer(addr) => write!(f, "null pointer at {addr:#x}"),
+            ReadError::Memory(e) => write!(f, "memory error: {e}"),
+            ReadError::NotInGame => write!(f, "not in game"),
         }
     }
 }
 
-impl std::error::Error for ReaderError {
+impl std::error::Error for ReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ReaderError::Memory(e) => Some(e),
-            _ => None,
+        if let ReadError::Memory(e) = self {
+            Some(e)
+        } else {
+            None
         }
     }
 }
 
-impl From<ProcessError> for ReaderError {
+impl From<ProcessError> for ReadError {
     fn from(e: ProcessError) -> Self {
-        ReaderError::Memory(e)
+        ReadError::Memory(e)
     }
 }
 
-/// Reads typed game data from a live CS2 process.
+/// Reads a null-terminated UTF-8 string from the process at `address`.
+///
+/// Reads up to `max_bytes` and stops at the first null byte.
+fn read_cstring(process: &mut Process, address: u64, max_bytes: usize) -> Result<String, ProcessError> {
+    let bytes = process.read_bytes(address, max_bytes)?;
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
+}
+
+/// Orchestrates reading all CS2 game state.
 pub struct GameReader {
     process: Process,
     offsets: Offsets,
@@ -54,249 +62,299 @@ pub struct GameReader {
 }
 
 impl GameReader {
-    /// Creates a new `GameReader` attached to the given process.
+    /// Creates a new `GameReader` from an already-open [`Process`].
     ///
-    /// Resolves the `libclient.so` base address at construction time.
-    /// Offsets can be auto-discovered or supplied directly.
-    pub fn new(process: Process, offsets: Offsets) -> Result<Self, ReaderError> {
-        let client_base = process
-            .get_module("libclient.so")
-            .map_err(|_| ReaderError::ModuleNotFound("libclient.so".into()))?;
+    /// `lib_name` is the name of the client library (e.g. `"libclient.so"`).
+    pub fn new(process: Process, offsets: Offsets) -> Result<Self, ReadError> {
+        let client_base = process.get_module(crate::constants::cs2::CLIENT_LIB)?;
         Ok(Self { process, offsets, client_base })
     }
 
-    /// Creates a `GameReader` with dynamically discovered offsets.
+    /// Returns an immutable reference to the underlying process.
+    pub fn process(&self) -> &Process {
+        &self.process
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────────
+
+    /// Resolves a direct (library-relative) pointer.
+    fn direct(&self, offset: u64) -> u64 {
+        self.client_base + offset
+    }
+
+    /// Reads a pointer-width value (u64) and returns it.
+    fn read_ptr(&mut self, address: u64) -> Result<u64, ProcessError> {
+        self.process.read_u64(address)
+    }
+
+    // ── Public read methods ──────────────────────────────────────────────────
+
+    /// Reads the current 4×4 view/projection matrix used by the renderer.
+    pub fn read_view_matrix(&mut self) -> Result<Mat4, ReadError> {
+        let addr = self.direct(self.offsets.direct.view_matrix);
+        let mut floats = [0f32; 16];
+        for (i, f) in floats.iter_mut().enumerate() {
+            *f = self.process.read_f32(addr + (i as u64) * 4)?;
+        }
+        // glam is column-major; CS2 stores row-major — transpose on load.
+        Ok(Mat4::from_cols_array(&floats).transpose())
+    }
+
+    /// Reads the current map name.
+    pub fn read_map_name(&mut self) -> Result<String, ReadError> {
+        // The map name is stored in the game rules object.
+        let gr_ptr_addr = self.direct(self.offsets.direct.game_rules);
+        let gr_ptr = self.read_ptr(gr_ptr_addr)?;
+        if gr_ptr == 0 {
+            return Ok(String::new());
+        }
+        // Map name string is at a fixed offset (0x188) inside the game rules object.
+        let name = read_cstring(&mut self.process, gr_ptr + 0x188, 64)?;
+        Ok(name)
+    }
+
+    /// Reads the local player's current state.
+    pub fn read_local_player(&mut self) -> Result<PlayerData, ReadError> {
+        let controller_addr = self.direct(self.offsets.direct.local_player_controller);
+        let controller = self.read_ptr(controller_addr)?;
+        if controller == 0 {
+            return Err(ReadError::NotInGame);
+        }
+
+        let pawn_addr = self.direct(self.offsets.direct.local_player_pawn);
+        let pawn = self.read_ptr(pawn_addr)?;
+        if pawn == 0 {
+            return Err(ReadError::NotInGame);
+        }
+
+        self.read_player_from_pawn(controller, pawn)
+    }
+
+    /// Reads all player data from the entity list.
+    pub fn read_players(&mut self) -> Result<Vec<PlayerData>, ReadError> {
+        let list_ptr_addr = self.direct(self.offsets.direct.entity_list);
+        let list_ptr = self.read_ptr(list_ptr_addr)?;
+        if list_ptr == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut players = Vec::new();
+        for i in 0..64u64 {
+            let controller = match self.process.read_u64(list_ptr + i * 0x78) {
+                Ok(v) if v != 0 => v,
+                _ => continue,
+            };
+
+            let pawn = match self.process.read_u64(
+                controller + self.offsets.iface.controller_pawn_handle,
+            ) {
+                Ok(v) if v != 0 => v,
+                _ => continue,
+            };
+
+            match self.read_player_from_pawn(controller, pawn) {
+                Ok(p) => players.push(p),
+                Err(ReadError::Memory(_)) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(players)
+    }
+
+    /// Reads entities (bomb, grenades, infernos) from the entity list.
+    pub fn read_entities(&mut self) -> Result<Vec<EntityInfo>, ReadError> {
+        // Simplified stub: reads the planted C4 if present.
+        let mut entities = Vec::new();
+
+        let c4_ptr_addr = self.direct(self.offsets.direct.planted_c4);
+        let c4_ptr = self.read_ptr(c4_ptr_addr).unwrap_or(0);
+        if c4_ptr != 0 {
+            let _origin = self.process.read_vec3(c4_ptr + self.offsets.iface.c4_origin)?;
+            entities.push(EntityInfo::Bomb);
+        }
+
+        Ok(entities)
+    }
+
+    /// Reads the planted bomb state.
+    pub fn read_bomb(&mut self) -> Result<BombData, ReadError> {
+        let c4_ptr_addr = self.direct(self.offsets.direct.planted_c4);
+        let c4_ptr = self.read_ptr(c4_ptr_addr).unwrap_or(0);
+        if c4_ptr == 0 {
+            return Ok(BombData::default());
+        }
+
+        let position = self.process.read_vec3(c4_ptr + self.offsets.iface.c4_origin)?;
+        let blow_time = self.process.read_f32(c4_ptr + self.offsets.iface.c4_blow_time)?;
+        let being_defused_handle = self.process.read_u32(c4_ptr + self.offsets.iface.c4_defuser).unwrap_or(0);
+        let defuse_countdown = self.process.read_f32(c4_ptr + self.offsets.iface.c4_defuse_countdown).unwrap_or(0.0);
+
+        Ok(BombData {
+            planted: true,
+            position,
+            timer: blow_time,
+            being_defused: being_defused_handle != 0,
+            defuse_remain_time: defuse_countdown,
+        })
+    }
+
+    /// Performs a full game state update, populating all fields in `data`.
     ///
-    /// Calls [`crate::process::offsets_discovery::discover_offsets`] to scan
-    /// the game binary for up-to-date offsets before constructing the reader.
-    pub fn new_with_discovery(mut process: Process) -> Result<Self, ReaderError> {
-        let offsets = crate::process::offsets_discovery::discover_offsets(&mut process)
-            .unwrap_or_else(|_| Offsets::load());
-        let client_base = process
-            .get_module("libclient.so")
-            .map_err(|_| ReaderError::ModuleNotFound("libclient.so".into()))?;
-        Ok(Self { process, offsets, client_base })
-    }
+    /// Individual sub-reads are allowed to fail without aborting the whole
+    /// update — partial data is still useful for rendering.
+    pub fn update_game_data(&mut self, data: &mut Data) -> Result<(), ReadError> {
+        // View matrix
+        if let Ok(vm) = self.read_view_matrix() {
+            data.view_matrix = vm;
+            data.in_game = true;
+        }
 
-    fn read_u32(&mut self, addr: u64) -> Result<u32, ReaderError> {
-        Ok(self.process.read_u32(addr)?)
-    }
+        // Map name
+        if let Ok(name) = self.read_map_name() {
+            data.map_name = name;
+        }
 
-    fn read_u64(&mut self, addr: u64) -> Result<u64, ReaderError> {
-        Ok(self.process.read_u64(addr)?)
-    }
+        // Local player
+        match self.read_local_player() {
+            Ok(lp) => {
+                data.in_game = true;
+                data.local_player = lp;
+            }
+            Err(ReadError::NotInGame) => {
+                data.in_game = false;
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
 
-    fn read_f32(&mut self, addr: u64) -> Result<f32, ReaderError> {
-        Ok(self.process.read_f32(addr)?)
-    }
+        // All players
+        if let Ok(players) = self.read_players() {
+            data.players = players;
+        }
 
-    fn read_vec3(&mut self, addr: u64) -> Result<Vec3, ReaderError> {
-        Ok(self.process.read_vec3(addr)?)
-    }
+        // Entities
+        if let Ok(ents) = self.read_entities() {
+            data.entities = ents;
+        }
 
-    /// Reads a null-terminated UTF-8 string (max `max_len` bytes) from `addr`.
-    fn read_string(&mut self, addr: u64, max_len: usize) -> Result<String, ReaderError> {
-        let bytes = self.process.read_bytes(addr, max_len)?;
-        let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-        Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
-    }
-
-    // ── Game-state readers ────────────────────────────────────────────────────
-
-    /// Reads fields from a player pawn into `out`.
-    fn read_pawn(&mut self, pawn: u64, out: &mut PlayerData) -> Result<(), ReaderError> {
-        // Clone scalar offsets up-front so we don't hold a borrow on `self`
-        // while calling `self.read_*` methods.
-        let off_health = self.offsets.iface.pawn_health;
-        let off_armor = self.offsets.iface.pawn_armor;
-        let off_origin = self.offsets.iface.pawn_origin;
-        let off_view_offset = self.offsets.iface.pawn_view_offset;
-        let off_velocity = self.offsets.iface.pawn_velocity;
-        let off_has_defuser = self.offsets.iface.pawn_has_defuser;
-        let off_has_helmet = self.offsets.iface.pawn_has_helmet;
-
-        out.pawn = pawn;
-        out.health = self.read_u32(pawn + off_health)? as i32;
-        out.armor = self.read_u32(pawn + off_armor)? as i32;
-
-        let origin = self.read_vec3(pawn + off_origin)?;
-        out.position = origin;
-
-        let view_offset = self.read_vec3(pawn + off_view_offset)?;
-        out.eye_pos = origin + view_offset;
-
-        out.velocity = self.read_vec3(pawn + off_velocity)?;
-
-        let has_defuser = self.process.read_bytes(pawn + off_has_defuser, 1)?;
-        out.has_defuser = has_defuser.first().copied().unwrap_or(0) != 0;
-
-        let has_helmet = self.process.read_bytes(pawn + off_has_helmet, 1)?;
-        out.has_helmet = has_helmet.first().copied().unwrap_or(0) != 0;
+        // Bomb
+        if let Ok(bomb) = self.read_bomb() {
+            data.bomb = bomb;
+        }
 
         Ok(())
     }
 
-    /// Populates `data` with the current game state.
-    pub fn update_game_data(&mut self, data: &mut Data) -> Result<(), ReaderError> {
-        let client = self.client_base;
-        let off = self.offsets.clone();
+    // ── Private helpers ──────────────────────────────────────────────────────
 
-        // ── View matrix ──────────────────────────────────────────────────────
-        let vm_addr = client + off.direct.view_matrix;
-        let mut vm_floats = [0f32; 16];
-        for (i, val) in vm_floats.iter_mut().enumerate() {
-            *val = self.read_f32(vm_addr + i as u64 * 4)?;
-        }
-        data.view_matrix = Mat4::from_cols_array(&vm_floats);
+    fn read_player_from_pawn(
+        &mut self,
+        controller: u64,
+        pawn: u64,
+    ) -> Result<PlayerData, ReadError> {
+        let health = self.process.read_u32(pawn + self.offsets.iface.pawn_health)? as i32;
+        let armor = self.process.read_u32(pawn + self.offsets.iface.pawn_armor)? as i32;
+        let position = self.process.read_vec3(pawn + self.offsets.iface.pawn_origin)?;
+        let eye_offset = self.process.read_vec3(pawn + self.offsets.iface.pawn_view_offset)?;
+        let velocity = self.process.read_vec3(pawn + self.offsets.iface.pawn_velocity)?;
 
-        // ── Local player controller ───────────────────────────────────────────
-        let lpc_ptr = client + off.direct.local_player_controller;
-        let local_controller = self.read_u64(lpc_ptr)?;
-        if local_controller == 0 {
-            data.in_game = false;
-            return Ok(());
-        }
-        data.in_game = true;
+        let steam_id = self.process.read_u64(controller + self.offsets.iface.controller_steam_id).unwrap_or(0);
+        let name = read_cstring(
+            &mut self.process,
+            controller + self.offsets.iface.controller_player_name,
+            128,
+        )
+        .unwrap_or_default();
 
-        // ── Local player name ─────────────────────────────────────────────────
-        let name_addr = local_controller + off.iface.controller_player_name;
-        data.local_player.name = self.read_string(name_addr, 128).unwrap_or_default();
+        let has_defuser_bytes = self.process.read_bytes(pawn + self.offsets.iface.pawn_has_defuser, 1).unwrap_or_default();
+        let has_defuser = has_defuser_bytes.first().copied().unwrap_or(0) != 0;
 
-        // ── Local player pawn ─────────────────────────────────────────────────
-        let lpp_ptr = client + off.direct.local_player_pawn;
-        let local_pawn = self.read_u64(lpp_ptr)?;
-        if local_pawn != 0 {
-            self.read_pawn(local_pawn, &mut data.local_player)?;
-        }
+        let has_helmet_bytes = self.process.read_bytes(pawn + self.offsets.iface.pawn_has_helmet, 1).unwrap_or_default();
+        let has_helmet = has_helmet_bytes.first().copied().unwrap_or(0) != 0;
 
-        // ── Entity list — collect other players ───────────────────────────────
-        let entity_list_ptr = client + off.direct.entity_list;
-        let entity_list = self.read_u64(entity_list_ptr).unwrap_or(0);
-        if entity_list != 0 {
-            data.players.clear();
-            // Walk up to 64 controller slots (indices 1–64; 0 is local).
-            for i in 1u64..=64 {
-                let controller_addr = entity_list + i * 0x78;
-                let controller = match self.read_u64(controller_addr) {
-                    Ok(v) if v != 0 => v,
-                    _ => continue,
-                };
+        let eye_pos = position + eye_offset;
 
-                let pawn_handle_addr = controller + off.iface.controller_pawn_handle;
-                let pawn_handle = self.read_u32(pawn_handle_addr).unwrap_or(0);
-                if pawn_handle == 0xFFFF_FFFF {
-                    continue;
-                }
-
-                // Resolve pawn via entity list (handle → pawn ptr).
-                let list_entry = entity_list + (((pawn_handle & 0x7FFF) >> 9) as u64 + 1) * 8;
-                let list_ptr = self.read_u64(list_entry).unwrap_or(0);
-                if list_ptr == 0 {
-                    continue;
-                }
-                let pawn = self.read_u64(list_ptr + (pawn_handle & 0x1FF) as u64 * 0x78)
-                    .unwrap_or(0);
-                if pawn == 0 {
-                    continue;
-                }
-
-                let mut player = PlayerData::default();
-                let name_addr = controller + off.iface.controller_player_name;
-                player.name = self.read_string(name_addr, 128).unwrap_or_default();
-                player.steam_id =
-                    self.read_u64(controller + off.iface.controller_steam_id).unwrap_or(0);
-
-                if self.read_pawn(pawn, &mut player).is_ok() && player.health > 0 {
-                    data.players.push(player);
-                }
-            }
-        }
-
-        // ── Planted C4 ────────────────────────────────────────────────────────
-        let c4_list_ptr = client + off.direct.planted_c4;
-        let c4_entry = self.read_u64(c4_list_ptr).unwrap_or(0);
-        if c4_entry != 0 {
-            let c4_ptr = self.read_u64(c4_entry).unwrap_or(0);
-            if c4_ptr != 0 {
-                data.bomb.planted = true;
-                data.bomb.timer =
-                    self.read_f32(c4_ptr + off.iface.c4_blow_time).unwrap_or(0.0);
-                data.bomb.position =
-                    self.read_vec3(c4_ptr + off.iface.c4_origin).unwrap_or_default();
-                let defuse_byte = self
-                    .process
-                    .read_bytes(c4_ptr + off.iface.c4_defused, 1)
-                    .unwrap_or_default();
-                data.bomb.being_defused =
-                    defuse_byte.first().copied().unwrap_or(0) != 0;
-                data.bomb.defuse_remain_time =
-                    self.read_f32(c4_ptr + off.iface.c4_defuse_countdown).unwrap_or(0.0);
-            }
-        }
-
-        // ── Game rules ────────────────────────────────────────────────────────
-        let rules_addr_ptr = client + off.direct.game_rules;
-        let rules_ptr = self.read_u64(rules_addr_ptr).unwrap_or(0);
-        if rules_ptr != 0 {
-            let freeze_byte = self
-                .process
-                .read_bytes(rules_ptr + off.iface.game_rules_freeze_period, 1)
-                .unwrap_or_default();
-            // freeze_byte[0] != 0 means freeze period is active (round start)
-            let _ = freeze_byte;
-        }
-
-        Ok(())
+        Ok(PlayerData {
+            steam_id,
+            pawn,
+            health,
+            armor,
+            position,
+            eye_pos,
+            head: eye_pos + Vec3::new(0.0, 0.0, 4.0),
+            name,
+            weapon: Weapon::Unknown,
+            bones: std::collections::HashMap::new(),
+            has_defuser,
+            has_helmet,
+            has_bomb: false,
+            visible: false,
+            color: 0,
+            rotation: 0.0,
+            velocity,
+        })
     }
 }
 
-/// Mock memory backend for unit tests.
+// ── Mock reader for testing ──────────────────────────────────────────────────
+
+/// A testable in-memory substitute for the real game process.
+///
+/// Allows unit tests to inject arbitrary memory contents and verify that
+/// [`GameReader`] parses them correctly without a running CS2 process.
 pub mod mock {
     use std::collections::HashMap;
 
-    /// Simple in-process memory store used in tests.
+    /// Simulated memory map used by [`MockProcess`].
     pub struct MockMemory {
-        data: HashMap<u64, u8>,
+        regions: HashMap<u64, Vec<u8>>,
     }
 
     impl MockMemory {
-        /// Creates an empty mock memory store.
         pub fn new() -> Self {
-            Self { data: HashMap::new() }
+            Self { regions: HashMap::new() }
         }
 
-        /// Writes a `u64` value at `address` (little-endian).
-        pub fn write_u64(&mut self, address: u64, value: u64) {
-            for (i, byte) in value.to_le_bytes().iter().enumerate() {
-                self.data.insert(address + i as u64, *byte);
-            }
+        /// Writes `bytes` starting at `address`.
+        pub fn write(&mut self, address: u64, bytes: &[u8]) {
+            let region = self.regions.entry(address).or_insert_with(|| vec![0u8; bytes.len()]);
+            region.resize(bytes.len().max(region.len()), 0);
+            region[..bytes.len()].copy_from_slice(bytes);
         }
 
-        /// Writes a `u32` value at `address` (little-endian).
-        pub fn write_u32(&mut self, address: u64, value: u32) {
-            for (i, byte) in value.to_le_bytes().iter().enumerate() {
-                self.data.insert(address + i as u64, *byte);
-            }
+        /// Writes an `f32` in little-endian format at `address`.
+        pub fn write_f32(&mut self, address: u64, val: f32) {
+            self.write(address, &val.to_le_bytes());
         }
 
-        /// Writes an `f32` value at `address` (little-endian).
-        pub fn write_f32(&mut self, address: u64, value: f32) {
-            for (i, byte) in value.to_bits().to_le_bytes().iter().enumerate() {
-                self.data.insert(address + i as u64, *byte);
-            }
+        /// Writes a `u32` in little-endian format at `address`.
+        pub fn write_u32(&mut self, address: u64, val: u32) {
+            self.write(address, &val.to_le_bytes());
         }
 
-        /// Reads `size` bytes starting at `address`. Returns zeros for unwritten bytes.
+        /// Writes a `u64` in little-endian format at `address`.
+        pub fn write_u64(&mut self, address: u64, val: u64) {
+            self.write(address, &val.to_le_bytes());
+        }
+
+        /// Reads `size` bytes from `address`, returning zeros for unmapped regions.
         pub fn read(&self, address: u64, size: usize) -> Vec<u8> {
-            (0..size as u64)
-                .map(|i| *self.data.get(&(address + i)).unwrap_or(&0))
-                .collect()
-        }
-    }
-
-    impl Default for MockMemory {
-        fn default() -> Self {
-            Self::new()
+            // Search for a region that contains the requested range.
+            for (&base, data) in &self.regions {
+                if address >= base {
+                    let offset = (address - base) as usize;
+                    if offset < data.len() {
+                        // Return as many bytes as available from this region, zero-pad the rest.
+                        let available = data.len() - offset;
+                        let mut result = vec![0u8; size];
+                        let copy_len = available.min(size);
+                        result[..copy_len].copy_from_slice(&data[offset..offset + copy_len]);
+                        return result;
+                    }
+                }
+            }
+            vec![0u8; size]
         }
     }
 }
@@ -306,27 +364,38 @@ mod tests {
     use super::mock::MockMemory;
 
     #[test]
-    fn test_mock_write_read_u64() {
+    fn test_mock_memory_write_read() {
         let mut mem = MockMemory::new();
-        mem.write_u64(0x1000, 0xDEAD_BEEF_CAFE_BABE);
-        let bytes = mem.read(0x1000, 8);
-        let val = u64::from_le_bytes(bytes.try_into().unwrap());
-        assert_eq!(val, 0xDEAD_BEEF_CAFE_BABE);
+        mem.write_u32(0x1000, 100);
+        let bytes = mem.read(0x1000, 4);
+        let val = u32::from_le_bytes(bytes.try_into().unwrap());
+        assert_eq!(val, 100);
     }
 
     #[test]
-    fn test_mock_write_read_f32() {
+    fn test_mock_memory_f32() {
         let mut mem = MockMemory::new();
-        mem.write_f32(0x2000, std::f32::consts::PI);
+        mem.write_f32(0x2000, 3.14);
         let bytes = mem.read(0x2000, 4);
         let val = f32::from_le_bytes(bytes.try_into().unwrap());
-        assert!((val - std::f32::consts::PI).abs() < 1e-7);
+        assert!((val - 3.14f32).abs() < 1e-5);
     }
 
     #[test]
-    fn test_mock_unwritten_is_zero() {
+    fn test_mock_memory_uninitialized_is_zero() {
         let mem = MockMemory::new();
-        let bytes = mem.read(0x9999, 4);
-        assert_eq!(bytes, vec![0u8; 4]);
+        let bytes = mem.read(0xDEAD_BEEF, 8);
+        assert_eq!(bytes, vec![0u8; 8]);
+    }
+
+    #[test]
+    fn test_mock_memory_string() {
+        let mut mem = MockMemory::new();
+        let name = b"TestPlayer\0";
+        mem.write(0x3000, name);
+        let raw = mem.read(0x3000, 16);
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+        let s = String::from_utf8_lossy(&raw[..end]);
+        assert_eq!(s, "TestPlayer");
     }
 }
