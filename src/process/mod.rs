@@ -454,6 +454,30 @@ impl Process {
         }
         None
     }
+
+    /// Resolves a CS2 entity handle to a pointer to the entity object.
+    ///
+    /// CS2 entity handles are 32-bit values that encode an index into a
+    /// two-level entity list:
+    ///
+    /// ```text
+    /// chunk_ptr = entity_list[handle >> 9]        (pointer-sized array entry)
+    /// entity    = chunk_ptr + (handle & 0x1FF) * 0x78
+    /// ```
+    ///
+    /// Returns `None` for null/invalid handles or when the chunk pointer is zero.
+    pub fn resolve_entity_handle(&mut self, entity_list_ptr: u64, handle: u32) -> Option<u64> {
+        if handle == 0 || handle == u32::MAX {
+            return None;
+        }
+        let chunk_index = (handle >> 9) as u64;
+        let entry_index = (handle & 0x1FF) as u64;
+        let chunk_ptr = self.read_u64(entity_list_ptr + chunk_index * 8).ok()?;
+        if chunk_ptr == 0 {
+            return None;
+        }
+        Some(chunk_ptr + entry_index * 0x78)
+    }
 }
 
 /// Parses `/proc/<pid>/maps` content into a list of `Module` entries.
@@ -562,5 +586,19 @@ mod tests {
         let (bytes, mask) = Process::parse_pattern("");
         assert!(bytes.is_empty());
         assert!(mask.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_entity_handle_null_returns_none() {
+        let mut proc = Process::new(0);
+        // Handle 0 is always invalid.
+        assert!(proc.resolve_entity_handle(0x1000, 0).is_none());
+    }
+
+    #[test]
+    fn test_resolve_entity_handle_max_returns_none() {
+        let mut proc = Process::new(0);
+        // u32::MAX is the "no entity" sentinel.
+        assert!(proc.resolve_entity_handle(0x1000, u32::MAX).is_none());
     }
 }
