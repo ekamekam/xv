@@ -4,7 +4,8 @@ use serde::Serialize;
 
 use crate::cs2::{
     bones::Bones,
-    entity::{EntityInfo, weapon::Weapon},
+    entity::EntityInfo,
+    weapon::Weapon,
 };
 
 /// Whether the surface directly in front of the player can be wallbanged.
