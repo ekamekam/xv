@@ -7,8 +7,14 @@ description = "A Rust project for game logic."
 license = "MIT"
 
 [dependencies]
-glam = "0.16"
+glam = { version = "0.16", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
-postcard = "0.8"
+postcard = "1"
 uuid = { version = "1.1", features = ["serde"] }
 rayon = "1.5"
+libc = "0.2"
+nix = { version = "0.27", features = ["process", "ptrace"] }
+
+[[example]]
+name = "read_game_state"
+path = "examples/read_game_state.rs"
