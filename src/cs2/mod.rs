@@ -1,7 +1,5 @@
+//! CS2 game-type sub-modules.
+
 pub mod bones;
 pub mod entity;
 pub mod weapon;
-
-pub use bones::Bones;
-pub use entity::{EntityInfo, GrenadeType};
-pub use weapon::Weapon;

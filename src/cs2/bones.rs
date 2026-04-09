@@ -1,73 +1,147 @@
-use serde::Serialize;
+//! Player skeleton bone identifiers used for hit-detection and ESP rendering.
 
-/// Skeletal bone identifiers for CS2 player models.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+use serde::{Deserialize, Serialize};
+
+/// Identifies a specific bone in a player's skeleton.
+///
+/// Use [`Bones::all()`] to iterate every tracked bone and
+/// [`Bones::hitboxes()`] to get only the bones relevant to hit detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Bones {
+    // ── Head / neck ──────────────────────────────────────────────────────────
     Head,
     Neck,
-    Spine3,
-    Spine2,
-    Spine1,
+
+    // ── Spine ────────────────────────────────────────────────────────────────
     Spine0,
+    Spine1,
+    Spine2,
+    Spine3,
+
+    // ── Pelvis ───────────────────────────────────────────────────────────────
     Pelvis,
-    UpperArmLeft,
-    LowerArmLeft,
-    HandLeft,
-    UpperArmRight,
-    LowerArmRight,
-    HandRight,
-    ThighLeft,
-    KneeLeft,
-    AnkleLeft,
-    ThighRight,
-    KneeRight,
-    AnkleRight,
+
+    // ── Left arm ─────────────────────────────────────────────────────────────
+    LeftShoulder,
+    LeftElbow,
+    LeftWrist,
+    LeftHand,
+
+    // ── Right arm ────────────────────────────────────────────────────────────
+    RightShoulder,
+    RightElbow,
+    RightWrist,
+    RightHand,
+
+    // ── Left leg ─────────────────────────────────────────────────────────────
+    LeftHip,
+    LeftKnee,
+    LeftAnkle,
+    LeftFoot,
+
+    // ── Right leg ────────────────────────────────────────────────────────────
+    RightHip,
+    RightKnee,
+    RightAnkle,
+    RightFoot,
 }
 
 impl Bones {
-    /// Returns all bones that are considered hitbox targets.
-    pub fn hitbox_bones() -> &'static [Bones] {
+    /// Returns every bone variant in a stable, deterministic order.
+    pub fn all() -> &'static [Bones] {
+        &[
+            Bones::Head,
+            Bones::Neck,
+            Bones::Spine0,
+            Bones::Spine1,
+            Bones::Spine2,
+            Bones::Spine3,
+            Bones::Pelvis,
+            Bones::LeftShoulder,
+            Bones::LeftElbow,
+            Bones::LeftWrist,
+            Bones::LeftHand,
+            Bones::RightShoulder,
+            Bones::RightElbow,
+            Bones::RightWrist,
+            Bones::RightHand,
+            Bones::LeftHip,
+            Bones::LeftKnee,
+            Bones::LeftAnkle,
+            Bones::LeftFoot,
+            Bones::RightHip,
+            Bones::RightKnee,
+            Bones::RightAnkle,
+            Bones::RightFoot,
+        ]
+    }
+
+    /// Returns the subset of bones that correspond to hittable hitboxes.
+    ///
+    /// These are the bones typically checked during aimbot / wallbang
+    /// calculations.
+    pub fn hitboxes() -> &'static [Bones] {
         &[
             Bones::Head,
             Bones::Neck,
             Bones::Spine3,
-            Bones::Spine2,
             Bones::Spine1,
-            Bones::Spine0,
             Bones::Pelvis,
-            Bones::UpperArmLeft,
-            Bones::LowerArmLeft,
-            Bones::UpperArmRight,
-            Bones::LowerArmRight,
-            Bones::ThighLeft,
-            Bones::KneeLeft,
-            Bones::ThighRight,
-            Bones::KneeRight,
         ]
     }
 
-    /// Returns the bone index used in the CS2 skeleton array.
-    pub fn index(&self) -> usize {
+    /// Returns a human-readable name suitable for logging or debug UI.
+    pub fn name(self) -> &'static str {
         match self {
-            Bones::Head => 6,
-            Bones::Neck => 5,
-            Bones::Spine3 => 4,
-            Bones::Spine2 => 3,
-            Bones::Spine1 => 2,
-            Bones::Spine0 => 1,
-            Bones::Pelvis => 0,
-            Bones::UpperArmLeft => 8,
-            Bones::LowerArmLeft => 9,
-            Bones::HandLeft => 10,
-            Bones::UpperArmRight => 13,
-            Bones::LowerArmRight => 14,
-            Bones::HandRight => 15,
-            Bones::ThighLeft => 22,
-            Bones::KneeLeft => 23,
-            Bones::AnkleLeft => 24,
-            Bones::ThighRight => 25,
-            Bones::KneeRight => 26,
-            Bones::AnkleRight => 27,
+            Bones::Head => "head",
+            Bones::Neck => "neck",
+            Bones::Spine0 => "spine_0",
+            Bones::Spine1 => "spine_1",
+            Bones::Spine2 => "spine_2",
+            Bones::Spine3 => "spine_3",
+            Bones::Pelvis => "pelvis",
+            Bones::LeftShoulder => "left_shoulder",
+            Bones::LeftElbow => "left_elbow",
+            Bones::LeftWrist => "left_wrist",
+            Bones::LeftHand => "left_hand",
+            Bones::RightShoulder => "right_shoulder",
+            Bones::RightElbow => "right_elbow",
+            Bones::RightWrist => "right_wrist",
+            Bones::RightHand => "right_hand",
+            Bones::LeftHip => "left_hip",
+            Bones::LeftKnee => "left_knee",
+            Bones::LeftAnkle => "left_ankle",
+            Bones::LeftFoot => "left_foot",
+            Bones::RightHip => "right_hip",
+            Bones::RightKnee => "right_knee",
+            Bones::RightAnkle => "right_ankle",
+            Bones::RightFoot => "right_foot",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_contains_head() {
+        assert!(Bones::all().contains(&Bones::Head));
+    }
+
+    #[test]
+    fn hitboxes_subset_of_all() {
+        let all: std::collections::HashSet<_> = Bones::all().iter().copied().collect();
+        for bone in Bones::hitboxes() {
+            assert!(all.contains(bone), "{:?} not in all()", bone);
+        }
+    }
+
+    #[test]
+    fn name_not_empty() {
+        for bone in Bones::all() {
+            assert!(!bone.name().is_empty(), "{:?} has empty name", bone);
         }
     }
 }

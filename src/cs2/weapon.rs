@@ -1,164 +1,284 @@
-use serde::Serialize;
+//! All CS2 weapon types plus helper methods.
 
-/// CS2 weapon identifiers.
-#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+/// Every weapon / item available in CS2.
+///
+/// The `name()` method returns the in-game item key name; `is_grenade()` and
+/// `is_sniper()` provide quick classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Weapon {
+    // ── Unknown / default ────────────────────────────────────────────────────
     #[default]
     Unknown,
-    // Pistols
-    Glock18,
-    P2000,
-    USP_S,
-    Dualies,
-    P250,
-    Tec9,
-    FiveSeven,
-    CZ75,
-    R8Revolver,
-    Deagle,
-    // SMGs
-    Mac10,
-    MP9,
-    MP5SD,
-    UMP45,
-    PP_Bizon,
-    P90,
-    MP7,
-    // Rifles
-    FAMAS,
-    Galil,
-    AK47,
-    M4A4,
-    M4A1_S,
-    SG553,
-    AUG,
-    SSG08,
-    AWP,
-    G3SG1,
-    SCAR20,
-    // Heavy
-    Nova,
-    XM1014,
-    Sawedoff,
-    MAG7,
-    M249,
-    Negev,
-    // Grenades
-    HEGrenade,
-    Flashbang,
-    SmokeGrenade,
-    Molotov,
-    IncGrenade,
-    Decoy,
-    // Equipment
+
+    // ── Knives / melee ───────────────────────────────────────────────────────
     Knife,
     KnifeT,
+    KnifeGhost,
+    Bayonet,
+    Bowie,
+    Butterfly,
+    Falchion,
+    Flip,
+    Gut,
+    Huntsman,
+    Karambit,
+    M9Bayonet,
+    Navaja,
+    Nomad,
+    Paracord,
+    Shadow,
+    Skeleton,
+    Stiletto,
+    Survival,
+    Talon,
+    Ursus,
+
+    // ── Pistols ──────────────────────────────────────────────────────────────
+    /// Glock-18 (T default).
+    Glock,
+    /// P2000 (CT default).
+    P2000,
+    /// USP-S.
+    UspS,
+    /// Dual Berettas.
+    Elite,
+    /// P250.
+    P250,
+    /// Tec-9.
+    Tec9,
+    /// Five-SeveN.
+    FiveSeven,
+    /// CZ75-Auto.
+    Cz75,
+    /// Desert Eagle.
+    Deagle,
+    /// R8 Revolver.
+    Revolver,
+
+    // ── SMGs ─────────────────────────────────────────────────────────────────
+    /// MAC-10.
+    Mac10,
+    /// MP9.
+    Mp9,
+    /// MP5-SD.
+    Mp5Sd,
+    /// MP7.
+    Mp7,
+    /// UMP-45.
+    Ump45,
+    /// PP-Bizon.
+    Bizon,
+    /// P90.
+    P90,
+
+    // ── Heavy ────────────────────────────────────────────────────────────────
+    /// Nova.
+    Nova,
+    /// XM1014.
+    Xm1014,
+    /// MAG-7.
+    Mag7,
+    /// Sawed-Off.
+    SawedOff,
+    /// M249.
+    M249,
+    /// Negev.
+    Negev,
+
+    // ── Rifles ───────────────────────────────────────────────────────────────
+    /// FAMAS (CT).
+    Famas,
+    /// Galil AR (T).
+    Galil,
+    /// AK-47.
+    Ak47,
+    /// M4A4.
+    M4A4,
+    /// M4A1-S.
+    M4A1S,
+    /// SG 553.
+    Sg553,
+    /// AUG.
+    Aug,
+    /// SSG 08 (scout).
+    Ssg08,
+    /// AWP.
+    Awp,
+    /// G3SG1 (T auto-sniper).
+    G3Sg1,
+    /// SCAR-20 (CT auto-sniper).
+    Scar20,
+
+    // ── Grenades ─────────────────────────────────────────────────────────────
+    /// High-Explosive grenade.
+    HeGrenade,
+    /// Flash-bang.
+    Flashbang,
+    /// Smoke grenade.
+    SmokeGrenade,
+    /// Molotov (T).
+    Molotov,
+    /// Incendiary grenade (CT).
+    Incendiary,
+    /// Decoy grenade.
+    Decoy,
+
+    // ── Other equipment ──────────────────────────────────────────────────────
+    /// Bomb (C4).
     C4,
-    Taser,
+    /// Zeus x27 taser.
+    Zeus,
+    /// Breach charge.
+    BreachCharge,
+    /// Bump mine.
+    BumpMine,
+    /// Diversion device.
+    Diversion,
+    /// Frag grenade.
+    FragGrenade,
+    /// Tactical awareness grenade.
+    Tagrenade,
+    /// Shield.
+    Shield,
 }
 
 impl Weapon {
-    /// Returns true if the weapon is a sniper rifle.
-    pub fn is_sniper(&self) -> bool {
-        matches!(self, Weapon::AWP | Weapon::SSG08 | Weapon::G3SG1 | Weapon::SCAR20)
-    }
-
-    /// Returns true if the weapon is a pistol.
-    pub fn is_pistol(&self) -> bool {
+    /// Returns `true` if this weapon is any kind of throwable grenade.
+    #[inline]
+    pub fn is_grenade(self) -> bool {
         matches!(
             self,
-            Weapon::Glock18
-                | Weapon::P2000
-                | Weapon::USP_S
-                | Weapon::Dualies
-                | Weapon::P250
-                | Weapon::Tec9
-                | Weapon::FiveSeven
-                | Weapon::CZ75
-                | Weapon::R8Revolver
-                | Weapon::Deagle
-        )
-    }
-
-    /// Returns true if the weapon is a grenade.
-    pub fn is_grenade(&self) -> bool {
-        matches!(
-            self,
-            Weapon::HEGrenade
+            Weapon::HeGrenade
                 | Weapon::Flashbang
                 | Weapon::SmokeGrenade
                 | Weapon::Molotov
-                | Weapon::IncGrenade
+                | Weapon::Incendiary
                 | Weapon::Decoy
+                | Weapon::FragGrenade
+                | Weapon::Tagrenade
         )
     }
 
-    /// Returns true if the weapon is a rifle.
-    pub fn is_rifle(&self) -> bool {
+    /// Returns `true` if this weapon is a bolt-action or semi-auto sniper rifle.
+    #[inline]
+    pub fn is_sniper(self) -> bool {
         matches!(
             self,
-            Weapon::FAMAS
-                | Weapon::Galil
-                | Weapon::AK47
-                | Weapon::M4A4
-                | Weapon::M4A1_S
-                | Weapon::SG553
-                | Weapon::AUG
-                | Weapon::SSG08
-                | Weapon::AWP
-                | Weapon::G3SG1
-                | Weapon::SCAR20
+            Weapon::Awp | Weapon::Ssg08 | Weapon::G3Sg1 | Weapon::Scar20
         )
     }
 
-    /// Convert from CS2 item definition index.
-    pub fn from_item_index(idx: u32) -> Self {
-        match idx {
-            1 => Weapon::Deagle,
-            2 => Weapon::Dualies,
-            3 => Weapon::FiveSeven,
-            4 => Weapon::Glock18,
-            7 => Weapon::AK47,
-            8 => Weapon::AUG,
-            9 => Weapon::AWP,
-            10 => Weapon::FAMAS,
-            11 => Weapon::G3SG1,
-            13 => Weapon::Galil,
-            14 => Weapon::M249,
-            16 => Weapon::M4A4,
-            17 => Weapon::Mac10,
-            19 => Weapon::P90,
-            23 => Weapon::MP5SD,
-            24 => Weapon::UMP45,
-            25 => Weapon::XM1014,
-            26 => Weapon::PP_Bizon,
-            27 => Weapon::MAG7,
-            28 => Weapon::Negev,
-            29 => Weapon::Sawedoff,
-            30 => Weapon::Tec9,
-            31 => Weapon::Taser,
-            32 => Weapon::P2000,
-            33 => Weapon::MP7,
-            34 => Weapon::MP9,
-            35 => Weapon::Nova,
-            36 => Weapon::P250,
-            38 => Weapon::SCAR20,
-            39 => Weapon::SG553,
-            40 => Weapon::SSG08,
-            60 => Weapon::M4A1_S,
-            61 => Weapon::USP_S,
-            63 => Weapon::CZ75,
-            64 => Weapon::R8Revolver,
-            42 => Weapon::Knife,
-            59 => Weapon::KnifeT,
-            44 => Weapon::Flashbang,
-            43 => Weapon::HEGrenade,
-            45 => Weapon::SmokeGrenade,
-            46 => Weapon::Molotov,
-            47 => Weapon::Decoy,
-            48 => Weapon::IncGrenade,
-            49 => Weapon::C4,
-            _ => Weapon::Unknown,
+    /// Returns the canonical in-game item key name for this weapon.
+    pub fn name(self) -> &'static str {
+        match self {
+            Weapon::Unknown => "unknown",
+            Weapon::Knife => "weapon_knife",
+            Weapon::KnifeT => "weapon_knife_t",
+            Weapon::KnifeGhost => "weapon_knife_ghost",
+            Weapon::Bayonet => "weapon_bayonet",
+            Weapon::Bowie => "weapon_knife_survival_bowie",
+            Weapon::Butterfly => "weapon_knife_butterfly",
+            Weapon::Falchion => "weapon_knife_falchion",
+            Weapon::Flip => "weapon_knife_flip",
+            Weapon::Gut => "weapon_knife_gut",
+            Weapon::Huntsman => "weapon_knife_tactical",
+            Weapon::Karambit => "weapon_knife_karambit",
+            Weapon::M9Bayonet => "weapon_knife_m9_bayonet",
+            Weapon::Navaja => "weapon_knife_gypsy_jackknife",
+            Weapon::Nomad => "weapon_knife_outdoor",
+            Weapon::Paracord => "weapon_knife_cord",
+            Weapon::Shadow => "weapon_knife_push",
+            Weapon::Skeleton => "weapon_knife_skeleton",
+            Weapon::Stiletto => "weapon_knife_stiletto",
+            Weapon::Survival => "weapon_knife_canis",
+            Weapon::Talon => "weapon_knife_widowmaker",
+            Weapon::Ursus => "weapon_knife_ursus",
+            Weapon::Glock => "weapon_glock",
+            Weapon::P2000 => "weapon_hkp2000",
+            Weapon::UspS => "weapon_usp_silencer",
+            Weapon::Elite => "weapon_elite",
+            Weapon::P250 => "weapon_p250",
+            Weapon::Tec9 => "weapon_tec9",
+            Weapon::FiveSeven => "weapon_fiveseven",
+            Weapon::Cz75 => "weapon_cz75a",
+            Weapon::Deagle => "weapon_deagle",
+            Weapon::Revolver => "weapon_revolver",
+            Weapon::Mac10 => "weapon_mac10",
+            Weapon::Mp9 => "weapon_mp9",
+            Weapon::Mp5Sd => "weapon_mp5sd",
+            Weapon::Mp7 => "weapon_mp7",
+            Weapon::Ump45 => "weapon_ump45",
+            Weapon::Bizon => "weapon_bizon",
+            Weapon::P90 => "weapon_p90",
+            Weapon::Nova => "weapon_nova",
+            Weapon::Xm1014 => "weapon_xm1014",
+            Weapon::Mag7 => "weapon_mag7",
+            Weapon::SawedOff => "weapon_sawedoff",
+            Weapon::M249 => "weapon_m249",
+            Weapon::Negev => "weapon_negev",
+            Weapon::Famas => "weapon_famas",
+            Weapon::Galil => "weapon_galilar",
+            Weapon::Ak47 => "weapon_ak47",
+            Weapon::M4A4 => "weapon_m4a1",
+            Weapon::M4A1S => "weapon_m4a1_silencer",
+            Weapon::Sg553 => "weapon_sg556",
+            Weapon::Aug => "weapon_aug",
+            Weapon::Ssg08 => "weapon_ssg08",
+            Weapon::Awp => "weapon_awp",
+            Weapon::G3Sg1 => "weapon_g3sg1",
+            Weapon::Scar20 => "weapon_scar20",
+            Weapon::HeGrenade => "weapon_hegrenade",
+            Weapon::Flashbang => "weapon_flashbang",
+            Weapon::SmokeGrenade => "weapon_smokegrenade",
+            Weapon::Molotov => "weapon_molotov",
+            Weapon::Incendiary => "weapon_incgrenade",
+            Weapon::Decoy => "weapon_decoy",
+            Weapon::C4 => "weapon_c4",
+            Weapon::Zeus => "weapon_taser",
+            Weapon::BreachCharge => "weapon_breachcharge",
+            Weapon::BumpMine => "weapon_bumpmine",
+            Weapon::Diversion => "weapon_diversion",
+            Weapon::FragGrenade => "weapon_frag_grenade",
+            Weapon::Tagrenade => "weapon_tagrenade",
+            Weapon::Shield => "weapon_shield",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_unknown() {
+        assert_eq!(Weapon::default(), Weapon::Unknown);
+    }
+
+    #[test]
+    fn grenade_classification() {
+        assert!(Weapon::HeGrenade.is_grenade());
+        assert!(Weapon::Flashbang.is_grenade());
+        assert!(Weapon::Molotov.is_grenade());
+        assert!(!Weapon::Ak47.is_grenade());
+        assert!(!Weapon::Awp.is_grenade());
+    }
+
+    #[test]
+    fn sniper_classification() {
+        assert!(Weapon::Awp.is_sniper());
+        assert!(Weapon::Ssg08.is_sniper());
+        assert!(Weapon::G3Sg1.is_sniper());
+        assert!(Weapon::Scar20.is_sniper());
+        assert!(!Weapon::Ak47.is_sniper());
+        assert!(!Weapon::Deagle.is_sniper());
+    }
+
+    #[test]
+    fn name_not_empty() {
+        assert!(!Weapon::Awp.name().is_empty());
+        assert!(!Weapon::Unknown.name().is_empty());
     }
 }
