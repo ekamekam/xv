@@ -1,178 +1,139 @@
-//! High-level UI/game-state orchestration.
+//! Phase 4: UI Integration Layer.
 //!
-//! [`GameStateManager`] wraps the Phase 2 [`GameReader`] and adds the Phase 3
-//! coordination layer: state tracking, feature flags, configuration, and event
-//! dispatching.
+//! Defines the `UIBackend` trait and supporting types that decouple the
+//! game logic from any specific UI framework implementation.
 
-pub mod traits;
-
-use crate::config::ConfigManager;
 use crate::data::Data;
-use crate::events::{EventDispatcher, GameEvent};
-use crate::features::{Feature, FeatureFlags};
-use crate::process::{offsets::Offsets, Process, ProcessError};
-use crate::reader::{GameReader, ReadError};
-use crate::state::{AppState, StateMachine};
 
-/// Error type for [`GameStateManager`] operations.
-#[derive(Debug)]
-pub enum ManagerError {
-    /// The underlying process could not be opened or became inaccessible.
-    Process(ProcessError),
-    /// A memory read failed.
-    Read(ReadError),
-    /// An invalid state-machine transition was attempted.
-    InvalidTransition(String),
+/// An input event from the user (keyboard or mouse).
+#[derive(Debug, Clone)]
+pub enum UIEvent {
+    KeyPress { key: u32, modifiers: u32 },
+    KeyRelease { key: u32, modifiers: u32 },
+    MouseMove { x: f32, y: f32 },
+    MouseButton { button: u8, pressed: bool, x: f32, y: f32 },
+    MouseScroll { delta: f32 },
+    Resize { width: u32, height: u32 },
+    Close,
 }
 
-impl std::fmt::Display for ManagerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ManagerError::Process(e)            => write!(f, "process error: {e}"),
-            ManagerError::Read(e)               => write!(f, "read error: {e}"),
-            ManagerError::InvalidTransition(s)  => write!(f, "invalid transition: {s}"),
+/// A notification message to display in the UI.
+#[derive(Debug, Clone)]
+pub struct Notification {
+    pub message: String,
+    pub level: NotificationLevel,
+    pub ttl_seconds: f32,
+}
+
+/// Severity of a notification.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NotificationLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+/// Abstract UI backend that any framework implementation must satisfy.
+pub trait UIBackend {
+    fn initialize(&mut self) -> Result<(), String>;
+    fn begin_frame(&mut self);
+    fn end_frame(&mut self);
+    fn handle_input(&mut self, event: UIEvent);
+    fn set_display_size(&mut self, width: f32, height: f32);
+    fn is_ready(&self) -> bool;
+    fn render(&mut self, data: &Data);
+    fn push_notification(&mut self, notification: Notification);
+}
+
+/// Configuration used by all UI panels.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Config {
+    pub esp_enabled: bool,
+    pub aimbot_enabled: bool,
+    pub triggerbot_enabled: bool,
+    pub autowall_enabled: bool,
+    pub aimbot_fov: f32,
+    pub aimbot_smooth: f32,
+    pub aimbot_aim_prediction: bool,
+    pub aimbot_lock_distance: f32,
+    pub esp_show_health: bool,
+    pub esp_show_name: bool,
+    pub esp_show_weapon: bool,
+    pub esp_show_distance: bool,
+    pub esp_show_skeleton: bool,
+    pub esp_box: bool,
+    pub overlay_opacity: f32,
+    pub frame_cap_fps: u32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            esp_enabled: true,
+            aimbot_enabled: false,
+            triggerbot_enabled: false,
+            autowall_enabled: false,
+            aimbot_fov: 10.0,
+            aimbot_smooth: 5.0,
+            aimbot_aim_prediction: false,
+            aimbot_lock_distance: 100.0,
+            esp_show_health: true,
+            esp_show_name: true,
+            esp_show_weapon: true,
+            esp_show_distance: true,
+            esp_show_skeleton: false,
+            esp_box: true,
+            overlay_opacity: 0.9,
+            frame_cap_fps: 144,
         }
     }
 }
 
-impl std::error::Error for ManagerError {}
-
-impl From<ProcessError> for ManagerError {
-    fn from(e: ProcessError) -> Self { ManagerError::Process(e) }
-}
-
-impl From<ReadError> for ManagerError {
-    fn from(e: ReadError) -> Self { ManagerError::Read(e) }
-}
-
-// ── GameStateManager ──────────────────────────────────────────────────────────
-
-/// Orchestrates game-state reading, configuration, feature flags, and events.
-///
-/// This is the primary entry point for the Phase 3 integration layer.
-///
-/// # Typical usage
-///
-/// ```rust,ignore
-/// let mut manager = GameStateManager::new(cs2_pid)?;
-/// manager.transition(AppState::Connected)?;
-/// manager.transition(AppState::Running)?;
-///
-/// loop {
-///     manager.update()?;
-///     let data = manager.get_data();
-///     // render data …
-/// }
-/// ```
-pub struct GameStateManager {
-    reader:     GameReader,
-    data:       Data,
-    state:      StateMachine,
-    config:     ConfigManager,
-    features:   FeatureFlags,
-    dispatcher: EventDispatcher,
-}
-
-impl GameStateManager {
-    /// Opens the CS2 process with `pid` and initialises all subsystems.
-    pub fn new(pid: u32) -> Result<Self, ManagerError> {
-        let process = Process::open(pid)?;
-        let offsets = Offsets::load();
-        let reader = GameReader::new(process, offsets)?;
-
-        Ok(Self {
-            reader,
-            data:       Data::default(),
-            state:      StateMachine::new(),
-            config:     ConfigManager::new(),
-            features:   FeatureFlags::default(),
-            dispatcher: EventDispatcher::new(),
-        })
+impl Config {
+    /// Load from a JSON file, falling back to defaults on any error.
+    pub fn load_or_default(path: &str) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
     }
 
-    // ── State ─────────────────────────────────────────────────────────────────
-
-    /// Returns the current [`AppState`].
-    pub fn app_state(&self) -> &AppState {
-        self.state.state()
+    /// Persist this config to a JSON file.
+    pub fn save(&self, path: &str) -> Result<(), String> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("serialize: {e}"))?;
+        std::fs::write(path, json).map_err(|e| format!("write: {e}"))
     }
 
-    /// Attempts to transition to `new_state`, emitting a
-    /// [`GameEvent::StateChanged`] event on success.
-    pub fn transition(&mut self, new_state: AppState) -> Result<(), ManagerError> {
-        let from = self.state.state().clone();
-        self.state.transition(new_state.clone())
-            .map_err(ManagerError::InvalidTransition)?;
-        self.dispatcher.emit(GameEvent::StateChanged { from, to: new_state });
-        Ok(())
-    }
-
-    // ── Game data ─────────────────────────────────────────────────────────────
-
-    /// Reads the latest game state into the internal snapshot.
-    ///
-    /// On process disconnection the state machine is automatically moved to
-    /// [`AppState::Disconnected`] and the error is returned.
-    pub fn update(&mut self) -> Result<(), ManagerError> {
-        match self.reader.update_game_data(&mut self.data) {
-            Ok(()) => Ok(()),
-            Err(ReadError::NotInGame) => {
-                self.data.in_game = false;
-                Ok(())
-            }
-            Err(e @ ReadError::Memory(_)) => {
-                // Process likely gone — transition to Disconnected if possible.
-                if self.state.is_active() {
-                    let _ = self.state.transition(AppState::Disconnected);
-                    self.dispatcher.emit(GameEvent::Error(e.to_string()));
-                }
-                Err(ManagerError::Read(e))
-            }
+    pub fn preset_conservative() -> Self {
+        Self {
+            esp_enabled: true,
+            aimbot_enabled: false,
+            aimbot_fov: 5.0,
+            aimbot_smooth: 10.0,
+            ..Default::default()
         }
     }
 
-    /// Returns a reference to the most recently read game state snapshot.
-    pub fn get_data(&self) -> &Data {
-        &self.data
+    pub fn preset_balanced() -> Self {
+        Self {
+            esp_enabled: true,
+            aimbot_enabled: true,
+            aimbot_fov: 10.0,
+            aimbot_smooth: 5.0,
+            ..Default::default()
+        }
     }
 
-    /// Returns `true` if the underlying process is still accessible.
-    pub fn is_valid(&self) -> bool {
-        self.state.is_active()
-    }
-
-    // ── Configuration ─────────────────────────────────────────────────────────
-
-    /// Returns a reference to the configuration manager.
-    pub fn config(&self) -> &ConfigManager {
-        &self.config
-    }
-
-    /// Returns a mutable reference to the configuration manager.
-    pub fn config_mut(&mut self) -> &mut ConfigManager {
-        &mut self.config
-    }
-
-    // ── Feature flags ─────────────────────────────────────────────────────────
-
-    /// Returns a reference to the current feature flags.
-    pub fn features(&self) -> &FeatureFlags {
-        &self.features
-    }
-
-    /// Enables or disables `feature`, emitting a
-    /// [`GameEvent::FeatureToggled`] event.
-    pub fn set_feature(&mut self, feature: Feature, enabled: bool) {
-        self.features.set(feature, enabled);
-        self.dispatcher.emit(GameEvent::FeatureToggled { feature, enabled });
-    }
-
-    // ── Events ────────────────────────────────────────────────────────────────
-
-    /// Returns a mutable reference to the event dispatcher.
-    ///
-    /// Use this to subscribe to or unsubscribe from game events.
-    pub fn dispatcher_mut(&mut self) -> &mut EventDispatcher {
-        &mut self.dispatcher
+    pub fn preset_aggressive() -> Self {
+        Self {
+            esp_enabled: true,
+            aimbot_enabled: true,
+            triggerbot_enabled: true,
+            aimbot_fov: 25.0,
+            aimbot_smooth: 1.0,
+            aimbot_aim_prediction: true,
+            ..Default::default()
+        }
     }
 }

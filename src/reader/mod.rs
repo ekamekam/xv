@@ -170,7 +170,7 @@ impl GameReader {
         let c4_ptr_addr = self.direct(self.offsets.direct.planted_c4);
         let c4_ptr = self.read_ptr(c4_ptr_addr).unwrap_or(0);
         if c4_ptr != 0 {
-            let _origin = self.process.read_vec3(c4_ptr + self.offsets.iface.c4_origin)?;
+            let origin = self.process.read_vec3(c4_ptr + self.offsets.iface.c4_origin)?;
             entities.push(EntityInfo::Bomb);
         }
 
