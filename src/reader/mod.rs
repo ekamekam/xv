@@ -66,7 +66,7 @@ impl GameReader {
     ///
     /// `lib_name` is the name of the client library (e.g. `"libclient.so"`).
     pub fn new(process: Process, offsets: Offsets) -> Result<Self, ReadError> {
-        let client_base = process.get_module(crate::constants::CLIENT_LIB)?;
+        let client_base = process.get_module(crate::constants::cs2::CLIENT_LIB)?;
         Ok(Self { process, offsets, client_base })
     }
 
@@ -171,7 +171,7 @@ impl GameReader {
         let c4_ptr = self.read_ptr(c4_ptr_addr).unwrap_or(0);
         if c4_ptr != 0 {
             let origin = self.process.read_vec3(c4_ptr + self.offsets.iface.c4_origin)?;
-            entities.push(EntityInfo::Bomb { position: origin });
+            entities.push(EntityInfo::Bomb);
         }
 
         Ok(entities)
