@@ -20,6 +20,8 @@ pub struct Direct {
     pub game_rules: u64,
     /// `dwGlobalVars` — pointer to `CGlobalVarsBase`.
     pub global_vars: u64,
+    /// Offset to pawn handle within CBasePlayerController
+    pub controller_pawn_handle: u64,
 }
 
 /// Offsets of fields within CS2 classes.
@@ -103,13 +105,14 @@ impl Offsets {
     pub fn load() -> Self {
         Self {
             direct: Direct {
-                entity_list: 0x18E1_A48,
+                entity_list: 0x24B3268,
                 local_player_controller: 0x1856_8B8,
                 local_player_pawn: 0x173F_D20,
                 view_matrix: 0x18D_D5E0,
                 planted_c4: 0x18E_0F28,
                 game_rules: 0x18D_7A40,
                 global_vars: 0,
+                controller_pawn_handle: 0x7E4,
             },
             iface: Interface {
                 // CCSPlayerController

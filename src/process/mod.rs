@@ -472,6 +472,12 @@ impl Process {
         }
         let chunk_index = (handle >> 9) as u64;
         let entry_index = (handle & 0x1FF) as u64;
+        
+        // Sanity check: chunk_index should be reasonable (< 512)
+        if chunk_index > 512 {
+            return None;
+        }
+        
         let chunk_ptr = self.read_u64(entity_list_ptr + chunk_index * 8).ok()?;
         if chunk_ptr == 0 {
             return None;
@@ -493,6 +499,7 @@ pub fn parse_proc_maps(maps: &str) -> Result<Vec<Module>, ProcessError> {
         if parts.len() < 6 {
             continue;
         }
+        let perms = parts[1];
         let pathname = parts[5].trim();
         if pathname.is_empty() || !pathname.starts_with('/') {
             continue;
@@ -515,10 +522,13 @@ pub fn parse_proc_maps(maps: &str) -> Result<Vec<Module>, ProcessError> {
             .unwrap_or(pathname)
             .to_owned();
 
+        let is_executable = perms.contains('x');
+
         modules
             .entry(name.clone())
             .and_modify(|m| {
-                if start < m.base {
+                // Prefer executable (r-xp) mappings as the module base for offset calculations
+                if is_executable {
                     m.base = start;
                 }
                 m.size += size;
