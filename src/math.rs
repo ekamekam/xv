@@ -148,6 +148,10 @@ mod tests {
         assert!(pitch.abs() < EPS);
         assert!((yaw - 90.0).abs() < EPS, "yaw={yaw}");
     }
+    let sx = (1.0 + clip.x) * 0.5 * width;
+    let sy = (1.0 - clip.y) * 0.5 * height;
+    Some((sx, sy))
+}
 
     // ── angles_to_fov ────────────────────────────────────────────────────────
 
